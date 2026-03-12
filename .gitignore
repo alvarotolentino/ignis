@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+target/
+
+# Environment
+.env
+.DS_Store
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Test coverage
+coverage/
+
+# Private docs (spec, plan, todo)
+docs/
+
+# Plugin build artifacts (source kept, target ignored)
+plugins/*/plugin/target/
