@@ -1,0 +1,20 @@
+package ignis:game@0.1.0;
+
+interface host-api {
+    draw-sprite: func(id: u32, x: f32, y: f32);
+    draw-rect: func(x: f32, y: f32, w: f32, h: f32, color: u32);
+    draw-text: func(text: string, x: f32, y: f32, size: u8);
+    play-sound: func(id: u32);
+    get-storage: func(key: string) -> option<string>;
+    set-storage: func(key: string, value: string);
+}
+
+world ignis-game {
+    import host-api;
+    export init: func();
+    export update: func(delta-ms: u32);
+    export handle-input: func(action: u32);
+    export get-name: func() -> string;
+    export get-version: func() -> string;
+    export get-author: func() -> string;
+}

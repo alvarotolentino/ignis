@@ -55,6 +55,7 @@ pub struct InputEvent {
 /// A single draw command emitted by a plugin each frame.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::enum_variant_names)] // Draw prefix is intentional — matches IGI host API naming
 pub enum RenderCommand {
     DrawRect {
         x: f32,
@@ -74,6 +75,9 @@ pub enum RenderCommand {
         y: f32,
         size: u8,
     },
+    PlaySound {
+        id: u32,
+    },
 }
 
 /// A complete frame of render commands sent to the frontend each tick.
@@ -84,6 +88,7 @@ pub struct RenderFrame {
 
 /// Metadata describing a game plugin.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)] // Constructed in Phase II for plugin metadata exchange
 pub struct GameMetadata {
     pub name: String,
     pub version: String,

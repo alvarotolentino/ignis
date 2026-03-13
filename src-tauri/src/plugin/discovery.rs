@@ -175,7 +175,7 @@ igi_version = "1"
         .expect("write manifest");
 
         // Create a dummy .wasm file
-        fs::write(plugin_dir.join("game.wasm"), &[0u8; 4]).expect("write wasm");
+        fs::write(plugin_dir.join("game.wasm"), [0u8; 4]).expect("write wasm");
 
         let plugins = discover_plugins(tmp.path());
         assert_eq!(plugins.len(), 1);

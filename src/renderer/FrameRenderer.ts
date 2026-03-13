@@ -1,5 +1,7 @@
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { Application, Container, Graphics, Text, TextStyle, Sprite } from "pixi.js";
 import type { RenderFrame, RenderCommand } from "../lib/renderBridge";
+import type { SpriteManager } from "./SpriteManager";
+import type { AudioManager } from "./AudioManager";
 
 /**
  * Renders RenderFrame data onto a PixiJS stage.
@@ -8,10 +10,18 @@ import type { RenderFrame, RenderCommand } from "../lib/renderBridge";
  */
 export class FrameRenderer {
   private gameLayer: Container;
+  private spriteManager: SpriteManager | null;
+  private audioManager: AudioManager | null;
 
-  constructor(private app: Application) {
+  constructor(
+    private app: Application,
+    spriteManager?: SpriteManager,
+    audioManager?: AudioManager
+  ) {
     this.gameLayer = new Container();
     this.app.stage.addChild(this.gameLayer);
+    this.spriteManager = spriteManager ?? null;
+    this.audioManager = audioManager ?? null;
   }
 
   /** Render a full frame of commands. Clears previous frame first. */
@@ -28,7 +38,10 @@ export class FrameRenderer {
           this.drawText(cmd);
           break;
         case "DrawSprite":
-          // Sprite rendering not yet implemented — skip silently
+          this.drawSprite(cmd);
+          break;
+        case "PlaySound":
+          this.playSound(cmd);
           break;
       }
     }
@@ -52,6 +65,29 @@ export class FrameRenderer {
     t.x = cmd.x ?? 0;
     t.y = cmd.y ?? 0;
     this.gameLayer.addChild(t);
+  }
+
+  private drawSprite(cmd: RenderCommand): void {
+    const id = cmd.id ?? 0;
+    const texture = this.spriteManager?.getSprite(id);
+
+    if (texture) {
+      const sprite = new Sprite(texture);
+      sprite.x = cmd.x ?? 0;
+      sprite.y = cmd.y ?? 0;
+      this.gameLayer.addChild(sprite);
+    } else {
+      // Magenta placeholder for missing sprites — visible during development
+      const g = new Graphics();
+      g.rect(cmd.x ?? 0, cmd.y ?? 0, 16, 16);
+      g.fill({ color: 0xff00ff, alpha: 1 });
+      this.gameLayer.addChild(g);
+    }
+  }
+
+  private playSound(cmd: RenderCommand): void {
+    const id = cmd.id ?? 0;
+    this.audioManager?.playSound(id);
   }
 
   /** Clean up the game layer. */

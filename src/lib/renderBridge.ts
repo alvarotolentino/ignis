@@ -1,7 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export interface RenderCommand {
-  type: 'DrawRect' | 'DrawSprite' | 'DrawText';
+  type: 'DrawRect' | 'DrawSprite' | 'DrawText' | 'PlaySound';
   // DrawRect fields
   x?: number;
   y?: number;

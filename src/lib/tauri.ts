@@ -37,3 +37,38 @@ export interface DiscoveredPlugin {
 
 export const listPlugins = () =>
   invoke<DiscoveredPlugin[]>("list_discovered_plugins");
+
+// ── Score types ──────────────────────────────────────────────
+
+export interface ScoreEntry {
+  player_name: string;
+  score: number;
+  achieved_at: string;
+}
+
+export const submitScore = (playerId: number, gameId: string, score: number) =>
+  invoke<void>("submit_score", { playerId, gameId, score });
+
+export const getHighScores = (gameId: string, limit: number) =>
+  invoke<ScoreEntry[]>("get_high_scores", { gameId, limit });
+
+// ── Keybinding types ─────────────────────────────────────────
+
+export interface Keybinding {
+  action: string;
+  device_type: string;
+  binding: string;
+}
+
+export const getKeybindings = (playerId: number) =>
+  invoke<Keybinding[]>("get_keybindings", { playerId });
+
+export const setKeybinding = (
+  playerId: number,
+  action: string,
+  deviceType: string,
+  binding: string,
+) => invoke<void>("set_keybinding", { playerId, action, deviceType, binding });
+
+export const resetKeybindings = (playerId: number) =>
+  invoke<Keybinding[]>("reset_keybindings", { playerId });

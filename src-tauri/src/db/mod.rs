@@ -1,4 +1,6 @@
+pub mod keybindings;
 pub mod players;
+pub mod scores;
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::path::Path;

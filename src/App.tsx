@@ -4,6 +4,7 @@ import MainMenu from "./pages/MainMenu";
 import PlayerSelect from "./pages/PlayerSelect";
 import Settings from "./pages/Settings";
 import GameView from "./pages/GameView";
+import HighScores from "./pages/HighScores";
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
           <Route path="/players" element={<PlayerSelect />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/play" element={<GameView />} />
+          <Route path="/scores" element={<HighScores />} />
         </Routes>
       </Layout>
     </BrowserRouter>

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
 use sqlx::FromRow;
 
 /// A player profile stored in the database.
@@ -63,13 +62,10 @@ pub async fn delete_player(
     Ok(())
 }
 
-pub fn commands() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![create_player, list_players, delete_player]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePool;
 
     #[tokio::test]
     async fn test_player_crud() {

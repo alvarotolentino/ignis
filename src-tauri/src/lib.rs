@@ -42,7 +42,7 @@ fn resolve_plugins_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Str
     // Last resort: check relative to CWD (cargo tauri dev runs from src-tauri/)
     let cwd_candidate = std::path::PathBuf::from("../plugins");
     if cwd_candidate.is_dir() {
-        return Ok(cwd_candidate.canonicalize().map_err(|e| e.to_string())?);
+        return cwd_candidate.canonicalize().map_err(|e| e.to_string());
     }
 
     Err("Cannot find plugins directory".into())
@@ -63,7 +63,7 @@ fn start_game(
         .find(|p| p.id == plugin_id)
         .ok_or_else(|| format!("Plugin '{plugin_id}' not found"))?;
 
-    state.engine.start_game(found.wasm_path, app)
+    state.engine.start_game(found.wasm_path, &plugin_id, app)
 }
 
 /// Stops the currently running game loop.
@@ -96,6 +96,10 @@ pub fn run() {
 
             let engine = Arc::new(GameEngine::new());
 
+            // Set the DB path so plugins can use get_storage / set_storage
+            let db_path = app_data_dir.join("ignis.db");
+            *engine.db_path.lock().unwrap() = Some(db_path);
+
             app.manage(AppState { db: pool, engine });
 
             Ok(())
@@ -104,6 +108,11 @@ pub fn run() {
             db::players::create_player,
             db::players::list_players,
             db::players::delete_player,
+            db::scores::submit_score,
+            db::scores::get_high_scores,
+            db::keybindings::get_keybindings,
+            db::keybindings::set_keybinding,
+            db::keybindings::reset_keybindings,
             plugin::discovery::list_discovered_plugins,
             start_game,
             stop_game,
