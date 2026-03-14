@@ -1,11 +1,11 @@
 [game]
 name = "Tetris"
-version = "1.0.0"
+version = "2.0.0"
 author = "Ignis Team"
 igi_version = "1"
 
 [display]
-resolution = { width = 320, height = 240 }
+resolution = { width = 960, height = 720 }
 
 [rendering]
 tier = "standard"

@@ -23,3 +23,6 @@ docs/
 
 # Plugin build artifacts (source kept, target ignored)
 plugins/*/plugin/target/
+
+# Compiled WASM binaries (build from source — see README)
+*.wasm

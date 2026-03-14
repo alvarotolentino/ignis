@@ -5,27 +5,29 @@ wit_bindgen::generate!({
 
 struct Tetris;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  Constants
+// ===========================================================================
 
-/// Virtual screen dimensions (must match ignis.toml).
-const SCREEN_W: f32 = 320.0;
-const SCREEN_H: f32 = 240.0;
+const SCREEN_W: f32 = 960.0;
+const SCREEN_H: f32 = 720.0;
 
-/// Board dimensions (standard Tetris: 10 wide × 20 tall, plus 2 hidden rows).
+/// Board: 10 cols × 22 rows (2 hidden + 20 visible).
 const BOARD_W: usize = 10;
-const BOARD_H: usize = 22; // rows 20-21 are the hidden spawn area
+const BOARD_H: usize = 22;
 const VISIBLE_H: usize = 20;
+const HIDDEN_ROWS: usize = 2;
 
-/// Cell size in pixels (fits 10×20 into 120×200 — centered on screen).
-const CELL: f32 = 10.0;
+const CELL: f32 = 30.0;
+const BOARD_PX_W: f32 = BOARD_W as f32 * CELL;
+const BOARD_PX_H: f32 = VISIBLE_H as f32 * CELL;
+const BOARD_X: f32 = (SCREEN_W - BOARD_PX_W) / 2.0;
+const BOARD_Y: f32 = (SCREEN_H - BOARD_PX_H) / 2.0;
 
-/// Board rendering offset — centered horizontally, flush with bottom.
-const BOARD_X: f32 = (SCREEN_W - BOARD_W as f32 * CELL) / 2.0;
-const BOARD_Y: f32 = SCREEN_H - VISIBLE_H as f32 * CELL - 10.0;
+const LEFT_X: f32 = 30.0;
+const RIGHT_X: f32 = BOARD_X + BOARD_PX_W + 30.0;
 
-/// Input action codes (must match host).
+// --- Input ---
 const ACTION_UP: u32 = 0;
 const ACTION_DOWN: u32 = 1;
 const ACTION_LEFT: u32 = 2;
@@ -33,180 +35,138 @@ const ACTION_RIGHT: u32 = 3;
 const ACTION_A: u32 = 4;
 const ACTION_B: u32 = 5;
 const ACTION_START: u32 = 6;
+const ACTION_SELECT: u32 = 7;
+const RELEASE_OFFSET: u32 = 8;
 
-/// Colors (0xRRGGBB).
-const COLOR_BG: u32 = 0x0A0A1A;
-const COLOR_BOARD_BG: u32 = 0x111122;
-const COLOR_GRID_LINE: u32 = 0x1A1A33;
-const COLOR_GHOST: u32 = 0x333355;
-const COLOR_OVERLAY: u32 = 0x000000;
+const NEXT_COUNT: usize = 5;
 
-/// Piece colors (SRS standard palette).
-const PIECE_COLORS: [u32; 7] = [
-    0x00FFFF, // I — cyan
-    0xFFFF00, // O — yellow
-    0xAA00FF, // T — purple
-    0x00FF00, // S — green
-    0xFF0000, // Z — red
-    0x0000FF, // J — blue
-    0xFF8800, // L — orange
+/// Gravity: ms per cell drop, indexed by level 1..=15. Level 16+ = instant.
+const GRAVITY_MS: [u32; 16] = [
+    0, 1000, 793, 618, 473, 355, 262, 190, 135, 94, 64, 43, 28, 18, 11, 7,
 ];
 
-/// Gravity: milliseconds per automatic drop, indexed by level (0..=29).
-/// Approximation of NES Tetris gravity curve.
-const GRAVITY_MS: [u32; 30] = [
-    800, 717, 633, 550, 467, 383, 300, 217, 133, 100, // 0-9
-     83,  83,  83,  67,  67,  67,  50,  50,  50,  33, // 10-19
-     33,  33,  33,  33,  33,  33,  33,  33,  33,  17, // 20-29
-];
-
-/// Lock delay: ms after a piece lands before it locks.
 const LOCK_DELAY_MS: u32 = 500;
+const MAX_LOCK_RESETS: u8 = 15;
+const DAS_DELAY_MS: u32 = 133;
+const ARR_MS: u32 = 10;
+const SOFT_DROP_FACTOR: u32 = 8;
 
-/// DAS: Delayed Auto Shift for left/right movement.
-const DAS_INITIAL_MS: u32 = 167; // ~10 frames at 60Hz
-const DAS_REPEAT_MS: u32 = 33;   // ~2 frames at 60Hz
+// --- Colours (0xRRGGBBAA) ---
+const COLOR_BG: u32 = 0x0D0D1AFF;
+const COLOR_BOARD_BG: u32 = 0x1A1A2EFF;
+const COLOR_GRID: u32 = 0xFFFFFF14;
+const COLOR_GHOST: u32 = 0xFFFFFF4D;
+const COLOR_HUD_BG: u32 = 0x15152AFF;
+const COLOR_OVERLAY: u32 = 0x000000BF;
+const COLOR_ACCENT: u32 = 0x00BCD4FF;
 
-/// Soft drop speed multiplier (20× gravity).
-const SOFT_DROP_FACTOR: u32 = 20;
+/// I, O, T, S, Z, J, L
+const PIECE_COLORS: [u32; 7] = [
+    0x00BCD4FF, 0xFFD600FF, 0x9C27B0FF, 0x4CAF50FF,
+    0xF44336FF, 0x2196F3FF, 0xFF9800FF,
+];
 
-// ---------------------------------------------------------------------------
-// SRS Tetromino Data
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  SRS Tetromino Data (row 0 = top, +y = down)
+// ===========================================================================
 
-/// Each piece has 4 rotation states (0=spawn, 1=R, 2=180, 3=L).
-/// Stored as 4×4 bitmasks — bit `(row * 4 + col)` indicates a filled cell.
-/// row 0 is top, col 0 is left.
-///
-/// We store [piece_id][rotation] = array of 4 (col, row) offsets from the
-/// piece origin (top-left of the 4×4 bounding box).
 type CellOffsets = [(i32, i32); 4];
 
-/// I piece rotations.
 const I_ROTATIONS: [CellOffsets; 4] = [
-    [(0, 1), (1, 1), (2, 1), (3, 1)],  // 0: flat
-    [(2, 0), (2, 1), (2, 2), (2, 3)],  // R
-    [(0, 2), (1, 2), (2, 2), (3, 2)],  // 2
-    [(1, 0), (1, 1), (1, 2), (1, 3)],  // L
+    [(0, 1), (1, 1), (2, 1), (3, 1)],
+    [(2, 0), (2, 1), (2, 2), (2, 3)],
+    [(0, 2), (1, 2), (2, 2), (3, 2)],
+    [(1, 0), (1, 1), (1, 2), (1, 3)],
 ];
-
-/// O piece rotations (same shape all 4 states).
 const O_ROTATIONS: [CellOffsets; 4] = [
     [(1, 0), (2, 0), (1, 1), (2, 1)],
     [(1, 0), (2, 0), (1, 1), (2, 1)],
     [(1, 0), (2, 0), (1, 1), (2, 1)],
     [(1, 0), (2, 0), (1, 1), (2, 1)],
 ];
-
-/// T piece rotations.
 const T_ROTATIONS: [CellOffsets; 4] = [
-    [(1, 0), (0, 1), (1, 1), (2, 1)],  // 0
-    [(1, 0), (1, 1), (2, 1), (1, 2)],  // R
-    [(0, 1), (1, 1), (2, 1), (1, 2)],  // 2
-    [(1, 0), (0, 1), (1, 1), (1, 2)],  // L
+    [(1, 0), (0, 1), (1, 1), (2, 1)],
+    [(1, 0), (1, 1), (2, 1), (1, 2)],
+    [(0, 1), (1, 1), (2, 1), (1, 2)],
+    [(1, 0), (0, 1), (1, 1), (1, 2)],
 ];
-
-/// S piece rotations.
 const S_ROTATIONS: [CellOffsets; 4] = [
-    [(1, 0), (2, 0), (0, 1), (1, 1)],  // 0
-    [(1, 0), (1, 1), (2, 1), (2, 2)],  // R
-    [(1, 1), (2, 1), (0, 2), (1, 2)],  // 2
-    [(0, 0), (0, 1), (1, 1), (1, 2)],  // L
+    [(1, 0), (2, 0), (0, 1), (1, 1)],
+    [(1, 0), (1, 1), (2, 1), (2, 2)],
+    [(1, 1), (2, 1), (0, 2), (1, 2)],
+    [(0, 0), (0, 1), (1, 1), (1, 2)],
 ];
-
-/// Z piece rotations.
 const Z_ROTATIONS: [CellOffsets; 4] = [
-    [(0, 0), (1, 0), (1, 1), (2, 1)],  // 0
-    [(2, 0), (1, 1), (2, 1), (1, 2)],  // R
-    [(0, 1), (1, 1), (1, 2), (2, 2)],  // 2
-    [(1, 0), (0, 1), (1, 1), (0, 2)],  // L
+    [(0, 0), (1, 0), (1, 1), (2, 1)],
+    [(2, 0), (1, 1), (2, 1), (1, 2)],
+    [(0, 1), (1, 1), (1, 2), (2, 2)],
+    [(1, 0), (0, 1), (1, 1), (0, 2)],
 ];
-
-/// J piece rotations.
 const J_ROTATIONS: [CellOffsets; 4] = [
-    [(0, 0), (0, 1), (1, 1), (2, 1)],  // 0
-    [(1, 0), (2, 0), (1, 1), (1, 2)],  // R
-    [(0, 1), (1, 1), (2, 1), (2, 2)],  // 2
-    [(1, 0), (1, 1), (0, 2), (1, 2)],  // L
+    [(0, 0), (0, 1), (1, 1), (2, 1)],
+    [(1, 0), (2, 0), (1, 1), (1, 2)],
+    [(0, 1), (1, 1), (2, 1), (2, 2)],
+    [(1, 0), (1, 1), (0, 2), (1, 2)],
 ];
-
-/// L piece rotations.
 const L_ROTATIONS: [CellOffsets; 4] = [
-    [(2, 0), (0, 1), (1, 1), (2, 1)],  // 0
-    [(1, 0), (1, 1), (1, 2), (2, 2)],  // R
-    [(0, 1), (1, 1), (2, 1), (0, 2)],  // 2
-    [(0, 0), (1, 0), (1, 1), (1, 2)],  // L
+    [(2, 0), (0, 1), (1, 1), (2, 1)],
+    [(1, 0), (1, 1), (1, 2), (2, 2)],
+    [(0, 1), (1, 1), (2, 1), (0, 2)],
+    [(0, 0), (1, 0), (1, 1), (1, 2)],
 ];
 
-/// All 7 pieces indexed by PieceKind.
 const ALL_ROTATIONS: [[CellOffsets; 4]; 7] = [
-    I_ROTATIONS,
-    O_ROTATIONS,
-    T_ROTATIONS,
-    S_ROTATIONS,
-    Z_ROTATIONS,
-    J_ROTATIONS,
-    L_ROTATIONS,
+    I_ROTATIONS, O_ROTATIONS, T_ROTATIONS,
+    S_ROTATIONS, Z_ROTATIONS, J_ROTATIONS, L_ROTATIONS,
 ];
 
-// ---------------------------------------------------------------------------
-// SRS Wall Kick Data
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  SRS Wall Kicks (+y = down)
+// ===========================================================================
 
-/// Wall kick offsets for J, L, S, T, Z pieces.
-/// Index: [from_rotation][test_index] -> (dx, dy).
-/// For a rotation 0→R, use JLSTZ_KICKS[0]; for R→2, use JLSTZ_KICKS[1]; etc.
-/// Note: dy is positive downward in our coordinate system.
+/// JLSTZ kicks: [from_rotation][0=CW, 1=CCW][test] → (dx, dy).
 const JLSTZ_KICKS: [[[(i32, i32); 5]; 2]; 4] = [
-    // 0→R and 0→L
     [
-        [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],  // 0→R
-        [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],      // 0→L (reverse)
+        [(0, 0), (-1, 0), (-1, -1), (0,  2), (-1,  2)], // 0→R
+        [(0, 0), ( 1, 0), ( 1, -1), (0,  2), ( 1,  2)], // 0→L
     ],
-    // R→2 and R→0
     [
-        [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],     // R→2
-        [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],     // R→0
+        [(0, 0), ( 1, 0), ( 1,  1), (0, -2), ( 1, -2)], // R→2
+        [(0, 0), ( 1, 0), ( 1,  1), (0, -2), ( 1, -2)], // R→0
     ],
-    // 2→L and 2→R
     [
-        [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],     // 2→L
-        [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],  // 2→R
+        [(0, 0), ( 1, 0), ( 1, -1), (0,  2), ( 1,  2)], // 2→L
+        [(0, 0), (-1, 0), (-1, -1), (0,  2), (-1,  2)], // 2→R
     ],
-    // L→0 and L→2
     [
-        [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],  // L→0
-        [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],  // L→2
+        [(0, 0), (-1, 0), (-1,  1), (0, -2), (-1, -2)], // L→0
+        [(0, 0), (-1, 0), (-1,  1), (0, -2), (-1, -2)], // L→2
     ],
 ];
 
-/// Wall kick offsets for I piece — unique table.
+/// I-piece kicks.
 const I_KICKS: [[[(i32, i32); 5]; 2]; 4] = [
-    // 0→R and 0→L
     [
-        [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],   // 0→R
-        [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],   // 0→L
+        [(0, 0), (-2, 0), ( 1, 0), (-2,  1), ( 1, -2)], // 0→R
+        [(0, 0), (-1, 0), ( 2, 0), (-1, -2), ( 2,  1)], // 0→L
     ],
-    // R→2 and R→0
     [
-        [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],   // R→2
-        [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],   // R→0
+        [(0, 0), (-1, 0), ( 2, 0), (-1, -2), ( 2,  1)], // R→2
+        [(0, 0), ( 2, 0), (-1, 0), ( 2, -1), (-1,  2)], // R→0
     ],
-    // 2→L and 2→R
     [
-        [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],   // 2→L
-        [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],   // 2→R
+        [(0, 0), ( 2, 0), (-1, 0), ( 2, -1), (-1,  2)], // 2→L
+        [(0, 0), ( 1, 0), (-2, 0), ( 1,  2), (-2, -1)], // 2→R
     ],
-    // L→0 and L→2
     [
-        [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],   // L→0
-        [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],   // L→2
+        [(0, 0), ( 1, 0), (-2, 0), ( 1,  2), (-2, -1)], // L→0
+        [(0, 0), (-2, 0), ( 1, 0), (-2,  1), ( 1, -2)], // L→2
     ],
 ];
 
-// ---------------------------------------------------------------------------
-// Game Types
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  Types
+// ===========================================================================
 
 #[derive(Clone, Copy, PartialEq)]
 enum GameState {
@@ -214,14 +174,16 @@ enum GameState {
     GameOver,
 }
 
-/// Simple xorshift32 RNG.
+// ---------------------------------------------------------------------------
+//  xorshift32 RNG
+// ---------------------------------------------------------------------------
+
 struct Rng(u32);
 
 impl Rng {
     fn new(seed: u32) -> Self {
         Self(if seed == 0 { 0xDEAD_BEEF } else { seed })
     }
-
     fn next_u32(&mut self) -> u32 {
         let mut x = self.0;
         x ^= x << 13;
@@ -230,156 +192,169 @@ impl Rng {
         self.0 = x;
         x
     }
-
     fn range(&mut self, n: u32) -> u32 {
         self.next_u32() % n
     }
 }
 
-/// 7-bag randomizer: ensures each of the 7 pieces appears once per bag.
-struct BagRandomizer {
-    bag: [u8; 7],
-    index: usize,
+// ---------------------------------------------------------------------------
+//  7-bag queue with look-ahead
+// ---------------------------------------------------------------------------
+
+const QUEUE_CAP: usize = 14;
+
+struct PieceQueue {
+    items: [u8; QUEUE_CAP],
+    head: usize,
+    len: usize,
     rng: Rng,
 }
 
-impl BagRandomizer {
+impl PieceQueue {
     fn new(seed: u32) -> Self {
-        let mut s = Self {
-            bag: [0; 7],
-            index: 7, // Force refill on first call
+        let mut q = Self {
+            items: [0; QUEUE_CAP],
+            head: 0,
+            len: 0,
             rng: Rng::new(seed),
         };
-        s.refill();
-        s
+        q.fill_bag();
+        q.fill_bag();
+        q
     }
 
-    fn refill(&mut self) {
-        for i in 0..7u8 {
-            self.bag[i as usize] = i;
-        }
-        // Fisher-Yates shuffle
-        for i in (1..7).rev() {
+    fn fill_bag(&mut self) {
+        let mut bag: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
+        for i in (1..7usize).rev() {
             let j = self.rng.range(i as u32 + 1) as usize;
-            self.bag.swap(i, j);
+            bag.swap(i, j);
         }
-        self.index = 0;
+        for &piece in &bag {
+            let idx = (self.head + self.len) % QUEUE_CAP;
+            self.items[idx] = piece;
+            self.len += 1;
+        }
     }
 
     fn next(&mut self) -> u8 {
-        if self.index >= 7 {
-            self.refill();
+        let piece = self.items[self.head];
+        self.head = (self.head + 1) % QUEUE_CAP;
+        self.len -= 1;
+        if self.len < 7 {
+            self.fill_bag();
         }
-        let piece = self.bag[self.index];
-        self.index += 1;
         piece
     }
 
-    fn peek(&self) -> u8 {
-        if self.index >= 7 {
-            // Would refill — peek at what would be bag[0] after refill.
-            // For simplicity, return the first element (won't be perfectly accurate
-            // but is good enough since we always peek before next()).
-            self.bag[0]
-        } else {
-            self.bag[self.index]
-        }
+    fn peek(&self, offset: usize) -> u8 {
+        self.items[(self.head + offset) % QUEUE_CAP]
     }
 }
 
-/// Active piece state.
+// ---------------------------------------------------------------------------
+//  Active piece
+// ---------------------------------------------------------------------------
+
 struct ActivePiece {
-    kind: u8,       // 0-6 index into ALL_ROTATIONS / PIECE_COLORS
-    rotation: u8,   // 0-3
-    x: i32,         // board column of piece origin (top-left of 4×4 box)
-    y: i32,         // board row of piece origin
+    kind: u8,
+    rotation: u8,
+    x: i32,
+    y: i32,
 }
 
 impl ActivePiece {
     fn cells(&self) -> CellOffsets {
         ALL_ROTATIONS[self.kind as usize][self.rotation as usize]
     }
-
     fn world_cells(&self) -> [(i32, i32); 4] {
-        let offsets = self.cells();
-        [
-            (self.x + offsets[0].0, self.y + offsets[0].1),
-            (self.x + offsets[1].0, self.y + offsets[1].1),
-            (self.x + offsets[2].0, self.y + offsets[2].1),
-            (self.x + offsets[3].0, self.y + offsets[3].1),
-        ]
+        let o = self.cells();
+        core::array::from_fn(|i| (self.x + o[i].0, self.y + o[i].1))
     }
 }
 
-/// The board: each cell is 0 (empty) or a color piece-kind+1.
 type Board = [[u8; BOARD_W]; BOARD_H];
 
-/// Full game state.
+// ===========================================================================
+//  Game
+// ===========================================================================
+
 struct Game {
     state: GameState,
     board: Board,
     piece: ActivePiece,
-    randomizer: BagRandomizer,
+    queue: PieceQueue,
 
-    // Scoring (NES-style)
+    hold_piece: Option<u8>,
+    hold_used: bool,
+
     score: u32,
     level: u32,
     lines_cleared: u32,
-    lines_until_next_level: u32,
 
-    // Timing
+    combo: i32,
+    b2b_active: bool,
+
     gravity_timer_ms: u32,
     lock_timer_ms: u32,
     is_locking: bool,
-    lock_moves_remaining: u8, // max 15 moves/rotations during lock delay
+    lock_resets: u8,
 
-    // DAS (Delayed Auto Shift)
-    das_direction: i32, // -1, 0, +1
-    das_timer_ms: u32,
+    das_dir: i32,
+    das_timer: u32,
     das_charged: bool,
 
-    // Input flags (consumed each frame)
-    input_left: bool,
-    input_right: bool,
-    input_down: bool,
+    // Held-state (set on press, cleared on release)
+    held_left: bool,
+    held_right: bool,
+    held_down: bool,
+
+    // One-shot (consumed each frame)
     input_rotate_cw: bool,
     input_rotate_ccw: bool,
     input_hard_drop: bool,
+    input_hold: bool,
     input_start: bool,
 
-    // Statistics
-    piece_count: u32,
+    last_was_rotation: bool,
+    last_clear_text: &'static str,
+    clear_text_timer: u32,
     score_submitted: bool,
 }
 
 impl Game {
     fn new() -> Self {
-        let mut randomizer = BagRandomizer::new(42);
-        let first_kind = randomizer.next();
+        let mut queue = PieceQueue::new(42);
+        let first = queue.next();
         Self {
             state: GameState::Playing,
             board: [[0; BOARD_W]; BOARD_H],
-            piece: Self::spawn_piece(first_kind),
-            randomizer,
+            piece: Self::spawn_piece(first),
+            queue,
+            hold_piece: None,
+            hold_used: false,
             score: 0,
-            level: 0,
+            level: 1,
             lines_cleared: 0,
-            lines_until_next_level: 10,
+            combo: -1,
+            b2b_active: false,
             gravity_timer_ms: 0,
             lock_timer_ms: 0,
             is_locking: false,
-            lock_moves_remaining: 15,
-            das_direction: 0,
-            das_timer_ms: 0,
+            lock_resets: 0,
+            das_dir: 0,
+            das_timer: 0,
             das_charged: false,
-            input_left: false,
-            input_right: false,
-            input_down: false,
+            held_left: false,
+            held_right: false,
+            held_down: false,
             input_rotate_cw: false,
             input_rotate_ccw: false,
             input_hard_drop: false,
+            input_hold: false,
             input_start: false,
-            piece_count: 1,
+            last_was_rotation: false,
+            last_clear_text: "",
+            clear_text_timer: 0,
             score_submitted: false,
         }
     }
@@ -389,97 +364,70 @@ impl Game {
     }
 
     fn spawn_piece(kind: u8) -> ActivePiece {
-        ActivePiece {
-            kind,
-            rotation: 0,
-            x: 3, // Center on a 10-wide board (4×4 box left edge at col 3)
-            y: BOARD_H as i32 - 2 - 4, // Spawn at row 18 (just below hidden area)
+        ActivePiece { kind, rotation: 0, x: 3, y: 0 }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Helpers
+    // -----------------------------------------------------------------------
+
+    fn is_blocked(&self, x: i32, y: i32) -> bool {
+        x < 0 || x >= BOARD_W as i32 || y < 0 || y >= BOARD_H as i32
+            || self.board[y as usize][x as usize] != 0
+    }
+
+    fn try_reset_lock(&mut self) {
+        if self.is_locking && self.lock_resets < MAX_LOCK_RESETS {
+            self.lock_timer_ms = 0;
+            self.lock_resets += 1;
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Collision Detection
-    // ---------------------------------------------------------------------------
-
-    fn fits(&self, kind: u8, rotation: u8, x: i32, y: i32) -> bool {
-        let offsets = ALL_ROTATIONS[kind as usize][rotation as usize];
-        for &(dx, dy) in &offsets {
-            let bx = x + dx;
-            let by = y + dy;
-            if bx < 0 || bx >= BOARD_W as i32 || by < 0 || by >= BOARD_H as i32 {
-                return false;
-            }
-            if self.board[by as usize][bx as usize] != 0 {
-                return false;
-            }
-        }
-        true
+    fn fits(&self, kind: u8, rot: u8, x: i32, y: i32) -> bool {
+        ALL_ROTATIONS[kind as usize][rot as usize]
+            .iter()
+            .all(|&(dx, dy)| !self.is_blocked(x + dx, y + dy))
     }
 
-    /// Returns the y position for the ghost piece (hard drop target).
     fn ghost_y(&self) -> i32 {
         let mut gy = self.piece.y;
-        while self.fits(self.piece.kind, self.piece.rotation, self.piece.x, gy - 1) {
-            gy -= 1;
+        while self.fits(self.piece.kind, self.piece.rotation, self.piece.x, gy + 1) {
+            gy += 1;
         }
         gy
     }
 
-    // ---------------------------------------------------------------------------
-    // SRS Rotation with Wall Kicks
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    //  SRS rotation with wall kicks
+    // -----------------------------------------------------------------------
 
     fn try_rotate(&mut self, clockwise: bool) {
         let from = self.piece.rotation;
-        let to = if clockwise {
-            (from + 1) % 4
-        } else {
-            (from + 3) % 4 // +3 mod 4 = -1 mod 4
-        };
-
-        let kick_table = if self.piece.kind == 0 {
-            &I_KICKS
-        } else {
-            &JLSTZ_KICKS
-        };
-
-        // Select kick sub-table: direction index is 0 for CW, 1 for CCW.
-        let dir_idx = if clockwise { 0 } else { 1 };
-        let kicks = &kick_table[from as usize][dir_idx];
+        let to = if clockwise { (from + 1) % 4 } else { (from + 3) % 4 };
+        let table = if self.piece.kind == 0 { &I_KICKS } else { &JLSTZ_KICKS };
+        let kicks = &table[from as usize][if clockwise { 0 } else { 1 }];
 
         for &(dx, dy) in kicks {
-            let nx = self.piece.x + dx;
-            // SRS kick dy: in our coordinate system row 0 = bottom, increasing y = up.
-            // SRS convention: positive dy = up, which matches our system directly.
-            let ny = self.piece.y + dy;
-            if self.fits(self.piece.kind, to, nx, ny) {
+            if self.fits(self.piece.kind, to, self.piece.x + dx, self.piece.y + dy) {
                 self.piece.rotation = to;
-                self.piece.x = nx;
-                self.piece.y = ny;
-                // Reset lock delay on successful rotation
-                if self.is_locking && self.lock_moves_remaining > 0 {
-                    self.lock_timer_ms = 0;
-                    self.lock_moves_remaining -= 1;
-                }
+                self.piece.x += dx;
+                self.piece.y += dy;
+                self.last_was_rotation = true;
+                self.try_reset_lock();
                 return;
             }
         }
-        // All kicks failed — rotation blocked.
     }
 
-    // ---------------------------------------------------------------------------
-    // Movement
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    //  Movement
+    // -----------------------------------------------------------------------
 
     fn move_horizontal(&mut self, dx: i32) -> bool {
-        let nx = self.piece.x + dx;
-        if self.fits(self.piece.kind, self.piece.rotation, nx, self.piece.y) {
-            self.piece.x = nx;
-            // Reset lock delay on successful move
-            if self.is_locking && self.lock_moves_remaining > 0 {
-                self.lock_timer_ms = 0;
-                self.lock_moves_remaining -= 1;
-            }
+        if self.fits(self.piece.kind, self.piece.rotation, self.piece.x + dx, self.piece.y) {
+            self.piece.x += dx;
+            self.last_was_rotation = false;
+            self.try_reset_lock();
             true
         } else {
             false
@@ -487,8 +435,9 @@ impl Game {
     }
 
     fn move_down(&mut self) -> bool {
-        if self.fits(self.piece.kind, self.piece.rotation, self.piece.x, self.piece.y - 1) {
-            self.piece.y -= 1;
+        if self.fits(self.piece.kind, self.piece.rotation, self.piece.x, self.piece.y + 1) {
+            self.piece.y += 1;
+            self.last_was_rotation = false;
             true
         } else {
             false
@@ -496,150 +445,228 @@ impl Game {
     }
 
     fn hard_drop(&mut self) {
-        let target_y = self.ghost_y();
-        let drop_rows = (self.piece.y - target_y) as u32;
-        self.score += drop_rows * 2; // 2 points per row for hard drop
-        self.piece.y = target_y;
+        let target = self.ghost_y();
+        self.score += (target - self.piece.y).max(0) as u32 * 2;
+        self.piece.y = target;
         self.lock_piece();
     }
 
-    // ---------------------------------------------------------------------------
-    // Locking & Line Clear
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    //  Hold
+    // -----------------------------------------------------------------------
 
-    fn lock_piece(&mut self) {
-        let cells = self.piece.world_cells();
-        let kind_marker = self.piece.kind + 1; // 1-7 in board cells
-
-        for &(cx, cy) in &cells {
-            if cx >= 0 && cx < BOARD_W as i32 && cy >= 0 && cy < BOARD_H as i32 {
-                self.board[cy as usize][cx as usize] = kind_marker;
-            }
+    fn do_hold(&mut self) {
+        if self.hold_used {
+            return;
         }
-
-        // Check for line clears
-        let lines = self.clear_lines();
-        self.add_score(lines);
-
-        // Spawn next piece
-        self.spawn_next();
-
-        // Reset lock state
+        self.hold_used = true;
+        let held = self.piece.kind;
+        self.piece = if let Some(prev) = self.hold_piece {
+            Self::spawn_piece(prev)
+        } else {
+            Self::spawn_piece(self.queue.next())
+        };
+        self.hold_piece = Some(held);
         self.is_locking = false;
         self.lock_timer_ms = 0;
-        self.lock_moves_remaining = 15;
+        self.lock_resets = 0;
+        self.gravity_timer_ms = 0;
+        self.last_was_rotation = false;
+    }
+
+    // -----------------------------------------------------------------------
+    //  T-Spin detection (3-corner rule)
+    // -----------------------------------------------------------------------
+
+    fn detect_tspin(&self) -> bool {
+        if self.piece.kind != 2 || !self.last_was_rotation {
+            return false;
+        }
+        let (cx, cy) = (self.piece.x + 1, self.piece.y + 1);
+        [(cx - 1, cy - 1), (cx + 1, cy - 1), (cx - 1, cy + 1), (cx + 1, cy + 1)]
+            .iter()
+            .filter(|&&(x, y)| self.is_blocked(x, y))
+            .count()
+            >= 3
+    }
+
+    // -----------------------------------------------------------------------
+    //  Locking & line clear
+    // -----------------------------------------------------------------------
+
+    fn lock_piece(&mut self) {
+        let is_tspin = self.detect_tspin();
+        let marker = self.piece.kind + 1;
+        for &(cx, cy) in &self.piece.world_cells() {
+            if cx >= 0 && cx < BOARD_W as i32 && cy >= 0 && cy < BOARD_H as i32 {
+                self.board[cy as usize][cx as usize] = marker;
+            }
+        }
+        let lines = self.clear_lines();
+        self.award_score(lines, is_tspin);
+        self.spawn_next();
     }
 
     fn clear_lines(&mut self) -> u32 {
-        let mut lines = 0;
-        let mut dst = 0usize;
-
-        for src in 0..BOARD_H {
-            let full = self.board[src].iter().all(|&c| c != 0);
-            if full {
+        let mut lines = 0u32;
+        let mut write = BOARD_H;
+        for read in (0..BOARD_H).rev() {
+            if self.board[read].iter().all(|&c| c != 0) {
                 lines += 1;
             } else {
-                if dst != src {
-                    self.board[dst] = self.board[src];
+                write -= 1;
+                if write != read {
+                    self.board[write] = self.board[read];
                 }
-                dst += 1;
             }
         }
-
-        // Clear remaining top rows
-        for row in dst..BOARD_H {
+        for row in 0..write {
             self.board[row] = [0; BOARD_W];
         }
-
         lines
     }
 
-    fn add_score(&mut self, lines: u32) {
-        if lines == 0 {
+    // -----------------------------------------------------------------------
+    //  Scoring (Guideline)
+    // -----------------------------------------------------------------------
+
+    fn award_score(&mut self, lines: u32, is_tspin: bool) {
+        self.last_clear_text = match (lines, is_tspin) {
+            (0, false) => "",
+            (1, false) => "SINGLE",
+            (2, false) => "DOUBLE",
+            (3, false) => "TRIPLE",
+            (4, false) => "TETRIS!",
+            (0, true) => "T-SPIN",
+            (1, true) => "T-SPIN SINGLE",
+            (2, true) => "T-SPIN DOUBLE",
+            (3, true) => "T-SPIN TRIPLE",
+            _ => "",
+        };
+        if !self.last_clear_text.is_empty() {
+            self.clear_text_timer = 0;
+        }
+
+        if lines == 0 && !is_tspin {
+            self.combo = -1;
             return;
         }
 
+        self.combo += 1;
+
+        let base = if is_tspin {
+            match lines { 1 => 800, 2 => 1200, 3 => 1600, _ => 100 }
+        } else {
+            match lines { 1 => 100, 2 => 300, 3 => 500, 4 => 800, _ => 0 }
+        };
+        let mut points = base * self.level;
+
+        // B2B bonus (1.5×)
+        let eligible = lines == 4 || is_tspin;
+        if eligible && self.b2b_active {
+            points = points * 3 / 2;
+        }
+        if eligible {
+            self.b2b_active = true;
+        } else if lines > 0 {
+            self.b2b_active = false;
+        }
+
+        // Combo bonus
+        if self.combo > 0 {
+            points += 50 * self.combo as u32 * self.level;
+        }
+
+        // All Clear bonus
+        if self.board.iter().all(|row| row.iter().all(|&c| c == 0)) {
+            points += 2800 * self.level;
+        }
+
+        self.score += points;
         self.lines_cleared += lines;
 
-        // Nintendo scoring: level multiplier × base
-        let base = match lines {
-            1 => 40,
-            2 => 100,
-            3 => 300,
-            4 => 1200, // Tetris!
-            _ => 0,
-        };
-        self.score += base * (self.level + 1);
-
-        // Level up
-        if lines >= self.lines_until_next_level {
-            self.level += 1;
-            let overflow = lines - self.lines_until_next_level;
-            self.lines_until_next_level = 10u32.saturating_sub(overflow);
-        } else {
-            self.lines_until_next_level -= lines;
+        // Level up: 10 lines per level, max 15
+        let target = (self.lines_cleared / 10 + 1).min(15);
+        if target > self.level {
+            self.level = target;
         }
     }
 
     fn spawn_next(&mut self) {
-        let next_kind = self.randomizer.next();
-        self.piece = Self::spawn_piece(next_kind);
-        self.piece_count += 1;
+        let kind = self.queue.next();
+        self.piece = Self::spawn_piece(kind);
         self.gravity_timer_ms = 0;
+        self.is_locking = false;
+        self.lock_timer_ms = 0;
+        self.lock_resets = 0;
+        self.hold_used = false;
+        self.last_was_rotation = false;
 
-        // Check game over: if the new piece doesn't fit, game is over
         if !self.fits(self.piece.kind, self.piece.rotation, self.piece.x, self.piece.y) {
             self.state = GameState::GameOver;
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Game Update
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    //  Game loop
+    // -----------------------------------------------------------------------
 
     fn current_gravity_ms(&self) -> u32 {
-        let idx = (self.level as usize).min(GRAVITY_MS.len() - 1);
-        GRAVITY_MS[idx]
+        if self.level >= 16 { 0 } else { GRAVITY_MS[self.level as usize] }
     }
 
     fn update_playing(&mut self, delta_ms: u32) {
-        // --- Process input ---
-        self.process_input(delta_ms);
+        // One-shot inputs
+        if self.input_rotate_cw {
+            self.try_rotate(true);
+            self.input_rotate_cw = false;
+        }
+        if self.input_rotate_ccw {
+            self.try_rotate(false);
+            self.input_rotate_ccw = false;
+        }
+        if self.input_hold {
+            self.do_hold();
+            self.input_hold = false;
+        }
+        if self.input_hard_drop {
+            self.hard_drop();
+            self.input_hard_drop = false;
+            return;
+        }
 
-        // --- Gravity ---
-        let gravity = if self.input_down {
-            self.current_gravity_ms() / SOFT_DROP_FACTOR
+        // DAS
+        self.process_das(delta_ms);
+
+        // Gravity
+        let grav = self.current_gravity_ms();
+        if grav == 0 {
+            while self.move_down() {}
         } else {
-            self.current_gravity_ms()
-        };
-
-        self.gravity_timer_ms += delta_ms;
-        while self.gravity_timer_ms >= gravity {
-            self.gravity_timer_ms -= gravity;
-            let moved = self.move_down();
-            if !moved {
-                break;
-            }
-            if self.input_down {
-                self.score += 1; // 1 point per soft-drop row
+            let effective = if self.held_down { (grav / SOFT_DROP_FACTOR).max(1) } else { grav };
+            self.gravity_timer_ms += delta_ms;
+            while self.gravity_timer_ms >= effective {
+                self.gravity_timer_ms -= effective;
+                if !self.move_down() {
+                    break;
+                }
+                if self.held_down {
+                    self.score += 1;
+                }
             }
         }
 
-        // --- Lock delay ---
+        // Lock delay
         let on_ground = !self.fits(
-            self.piece.kind,
-            self.piece.rotation,
-            self.piece.x,
-            self.piece.y - 1,
+            self.piece.kind, self.piece.rotation, self.piece.x, self.piece.y + 1,
         );
-
         if on_ground {
             if !self.is_locking {
                 self.is_locking = true;
                 self.lock_timer_ms = 0;
             }
             self.lock_timer_ms += delta_ms;
-            if self.lock_timer_ms >= LOCK_DELAY_MS || self.lock_moves_remaining == 0 {
+            if self.lock_timer_ms >= LOCK_DELAY_MS || self.lock_resets >= MAX_LOCK_RESETS {
                 self.lock_piece();
             }
         } else {
@@ -647,242 +674,222 @@ impl Game {
             self.lock_timer_ms = 0;
         }
 
-        // Clear consumed input
-        self.input_left = false;
-        self.input_right = false;
-        self.input_down = false;
-        self.input_rotate_cw = false;
-        self.input_rotate_ccw = false;
-        self.input_hard_drop = false;
-        self.input_start = false;
+        // Clear text timer
+        if !self.last_clear_text.is_empty() {
+            self.clear_text_timer += delta_ms;
+            if self.clear_text_timer >= 2000 {
+                self.last_clear_text = "";
+            }
+        }
     }
 
-    fn process_input(&mut self, delta_ms: u32) {
-        // Rotation (consume immediately)
-        if self.input_rotate_cw {
-            self.try_rotate(true);
-        }
-        if self.input_rotate_ccw {
-            self.try_rotate(false);
-        }
-
-        // Hard drop
-        if self.input_hard_drop {
-            self.hard_drop();
-            return; // Piece locked, skip movement
-        }
-
-        // Horizontal movement with DAS
-        let dir = if self.input_left {
-            -1
-        } else if self.input_right {
-            1
-        } else {
-            0
+    fn process_das(&mut self, delta_ms: u32) {
+        let dir = match (self.held_left, self.held_right) {
+            (true, false) => -1,
+            (false, true) => 1,
+            _ => 0,
         };
 
-        if dir != 0 {
-            if dir != self.das_direction {
-                // New direction: move immediately, reset DAS
-                self.das_direction = dir;
-                self.das_timer_ms = 0;
-                self.das_charged = false;
+        if dir == 0 {
+            self.das_dir = 0;
+            self.das_timer = 0;
+            self.das_charged = false;
+            return;
+        }
+
+        if dir != self.das_dir {
+            self.das_dir = dir;
+            self.das_timer = 0;
+            self.das_charged = false;
+            self.move_horizontal(dir);
+        } else if !self.das_charged {
+            self.das_timer += delta_ms;
+            if self.das_timer >= DAS_DELAY_MS {
+                self.das_charged = true;
+                self.das_timer -= DAS_DELAY_MS;
                 self.move_horizontal(dir);
-            } else {
-                // Same direction: DAS logic
-                self.das_timer_ms += delta_ms;
-                if !self.das_charged {
-                    if self.das_timer_ms >= DAS_INITIAL_MS {
-                        self.das_charged = true;
-                        self.das_timer_ms -= DAS_INITIAL_MS;
-                        self.move_horizontal(dir);
-                    }
-                } else {
-                    while self.das_timer_ms >= DAS_REPEAT_MS {
-                        self.das_timer_ms -= DAS_REPEAT_MS;
-                        self.move_horizontal(dir);
-                    }
-                }
             }
         } else {
-            self.das_direction = 0;
-            self.das_timer_ms = 0;
-            self.das_charged = false;
+            self.das_timer += delta_ms;
+            while self.das_timer >= ARR_MS {
+                self.das_timer -= ARR_MS;
+                if !self.move_horizontal(dir) {
+                    break;
+                }
+            }
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Rendering
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    //  Rendering (960 × 720, 3-column layout)
+    // -----------------------------------------------------------------------
+
+    fn draw_board_cell(col: i32, row: i32, color: u32) {
+        if row >= HIDDEN_ROWS as i32 && row < BOARD_H as i32 && col >= 0 && col < BOARD_W as i32 {
+            use crate::ignis::game::host_api;
+            let px = BOARD_X + col as f32 * CELL + 1.0;
+            let py = BOARD_Y + (row - HIDDEN_ROWS as i32) as f32 * CELL + 1.0;
+            host_api::draw_rect(px, py, CELL - 2.0, CELL - 2.0, color);
+        }
+    }
+
+    fn draw_piece_preview(kind: u8, x: f32, y: f32, cell_size: f32) {
+        use crate::ignis::game::host_api;
+        let offsets = ALL_ROTATIONS[kind as usize][0];
+        let color = PIECE_COLORS[kind as usize];
+
+        let (min_c, max_c) = offsets.iter().fold((4, 0), |(lo, hi), &(c, _)| (lo.min(c), hi.max(c)));
+        let (min_r, max_r) = offsets.iter().fold((4, 0), |(lo, hi), &(_, r)| (lo.min(r), hi.max(r)));
+        let ox = (4.0 - (max_c - min_c + 1) as f32) / 2.0 * cell_size;
+        let oy = (3.0 - (max_r - min_r + 1) as f32) / 2.0 * cell_size;
+
+        for &(dc, dr) in &offsets {
+            let px = x + ox + (dc - min_c) as f32 * cell_size;
+            let py = y + oy + (dr - min_r) as f32 * cell_size;
+            host_api::draw_rect(px, py, cell_size - 2.0, cell_size - 2.0, color);
+        }
+    }
 
     fn render(&self) {
         use crate::ignis::game::host_api;
 
-        // Background
         host_api::draw_rect(0.0, 0.0, SCREEN_W, SCREEN_H, COLOR_BG);
 
-        // Board background
-        host_api::draw_rect(
-            BOARD_X - 1.0,
-            BOARD_Y - 1.0,
-            BOARD_W as f32 * CELL + 2.0,
-            VISIBLE_H as f32 * CELL + 2.0,
-            COLOR_BOARD_BG,
-        );
+        // Board border + background
+        host_api::draw_rect(BOARD_X - 2.0, BOARD_Y - 2.0, BOARD_PX_W + 4.0, BOARD_PX_H + 4.0, COLOR_ACCENT);
+        host_api::draw_rect(BOARD_X, BOARD_Y, BOARD_PX_W, BOARD_PX_H, COLOR_BOARD_BG);
 
-        // Grid lines (subtle)
+        // Grid lines
         for col in 0..=BOARD_W {
-            let x = BOARD_X + col as f32 * CELL;
-            host_api::draw_rect(x, BOARD_Y, 1.0, VISIBLE_H as f32 * CELL, COLOR_GRID_LINE);
+            host_api::draw_rect(BOARD_X + col as f32 * CELL, BOARD_Y, 1.0, BOARD_PX_H, COLOR_GRID);
         }
         for row in 0..=VISIBLE_H {
-            let y = BOARD_Y + row as f32 * CELL;
-            host_api::draw_rect(BOARD_X, y, BOARD_W as f32 * CELL, 1.0, COLOR_GRID_LINE);
+            host_api::draw_rect(BOARD_X, BOARD_Y + row as f32 * CELL, BOARD_PX_W, 1.0, COLOR_GRID);
         }
 
-        // Locked cells (only visible rows: 0..VISIBLE_H)
-        for row in 0..VISIBLE_H {
+        // Locked cells
+        for row in HIDDEN_ROWS..BOARD_H {
             for col in 0..BOARD_W {
                 let cell = self.board[row][col];
                 if cell != 0 {
-                    let color = PIECE_COLORS[(cell - 1) as usize];
-                    let px = BOARD_X + col as f32 * CELL + 1.0;
-                    // Board row 0 = bottom → screen y = BOARD_Y + (VISIBLE_H - 1 - row) * CELL
-                    let py = BOARD_Y + (VISIBLE_H - 1 - row) as f32 * CELL + 1.0;
-                    host_api::draw_rect(px, py, CELL - 2.0, CELL - 2.0, color);
+                    Self::draw_board_cell(col as i32, row as i32, PIECE_COLORS[(cell - 1) as usize]);
                 }
             }
         }
 
-        // Ghost piece
         if self.state == GameState::Playing {
+            // Ghost piece
             let gy = self.ghost_y();
             if gy != self.piece.y {
-                let offsets = self.piece.cells();
-                for &(dx, dy) in &offsets {
-                    let bx = self.piece.x + dx;
-                    let by = gy + dy;
-                    if by >= 0 && (by as usize) < VISIBLE_H && bx >= 0 && bx < BOARD_W as i32 {
-                        let px = BOARD_X + bx as f32 * CELL + 1.0;
-                        let py = BOARD_Y + (VISIBLE_H as i32 - 1 - by) as f32 * CELL + 1.0;
-                        host_api::draw_rect(px, py, CELL - 2.0, CELL - 2.0, COLOR_GHOST);
-                    }
+                for &(dx, dy) in &self.piece.cells() {
+                    Self::draw_board_cell(self.piece.x + dx, gy + dy, COLOR_GHOST);
                 }
             }
-        }
-
-        // Active piece
-        if self.state == GameState::Playing {
-            let cells = self.piece.world_cells();
+            // Active piece
             let color = PIECE_COLORS[self.piece.kind as usize];
-            for &(cx, cy) in &cells {
-                if cy >= 0 && (cy as usize) < VISIBLE_H && cx >= 0 && cx < BOARD_W as i32 {
-                    let px = BOARD_X + cx as f32 * CELL + 1.0;
-                    let py = BOARD_Y + (VISIBLE_H as i32 - 1 - cy) as f32 * CELL + 1.0;
-                    host_api::draw_rect(px, py, CELL - 2.0, CELL - 2.0, color);
-                }
+            for &(cx, cy) in &self.piece.world_cells() {
+                Self::draw_board_cell(cx, cy, color);
             }
         }
 
-        // --- HUD (right side) ---
-        let hud_x = BOARD_X + BOARD_W as f32 * CELL + 15.0;
+        // ---- LEFT PANEL ----
+        let lx = LEFT_X;
 
-        // Next piece preview
-        host_api::draw_text("NEXT", hud_x, BOARD_Y, 8);
-        self.render_preview(hud_x, BOARD_Y + 14.0);
-
-        // Score
-        host_api::draw_text("SCORE", hud_x, BOARD_Y + 60.0, 8);
-        let score_str = self.score.to_string();
-        host_api::draw_text(&score_str, hud_x, BOARD_Y + 72.0, 8);
-
-        // Level
-        host_api::draw_text("LEVEL", hud_x, BOARD_Y + 96.0, 8);
-        let level_str = self.level.to_string();
-        host_api::draw_text(&level_str, hud_x, BOARD_Y + 108.0, 8);
-
-        // Lines
-        host_api::draw_text("LINES", hud_x, BOARD_Y + 132.0, 8);
-        let lines_str = self.lines_cleared.to_string();
-        host_api::draw_text(&lines_str, hud_x, BOARD_Y + 144.0, 8);
-
-        // --- Left side: controls hint ---
-        let left_x = 5.0;
-        host_api::draw_text("CONTROLS", left_x, BOARD_Y, 6);
-        host_api::draw_text("LEFT/RIGHT Move", left_x, BOARD_Y + 12.0, 5);
-        host_api::draw_text("DOWN  Soft drop", left_x, BOARD_Y + 22.0, 5);
-        host_api::draw_text("UP    Hard drop", left_x, BOARD_Y + 32.0, 5);
-        host_api::draw_text("A     Rotate CW", left_x, BOARD_Y + 42.0, 5);
-        host_api::draw_text("B     Rotate CCW", left_x, BOARD_Y + 52.0, 5);
-
-        // --- Game Over overlay ---
-        if self.state == GameState::GameOver {
-            // Semi-transparent overlay
-            host_api::draw_rect(
-                BOARD_X,
-                BOARD_Y,
-                BOARD_W as f32 * CELL,
-                VISIBLE_H as f32 * CELL,
-                COLOR_OVERLAY,
-            );
-            let cx = BOARD_X + (BOARD_W as f32 * CELL) / 2.0 - 30.0;
-            let cy = BOARD_Y + (VISIBLE_H as f32 * CELL) / 2.0 - 12.0;
-            host_api::draw_text("GAME OVER", cx, cy, 10);
-            host_api::draw_text("Press START", cx + 2.0, cy + 16.0, 7);
+        host_api::draw_text("HOLD", lx, BOARD_Y, 16);
+        host_api::draw_rect(lx, BOARD_Y + 24.0, 120.0, 70.0, COLOR_HUD_BG);
+        if let Some(hk) = self.hold_piece {
+            Self::draw_piece_preview(hk, lx + 10.0, BOARD_Y + 34.0, 14.0);
         }
-    }
 
-    fn render_preview(&self, x: f32, y: f32) {
-        use crate::ignis::game::host_api;
+        host_api::draw_text("SCORE", lx, BOARD_Y + 120.0, 14);
+        host_api::draw_text(&self.score.to_string(), lx, BOARD_Y + 140.0, 18);
 
-        let next_kind = self.randomizer.peek();
-        let offsets = ALL_ROTATIONS[next_kind as usize][0]; // spawn rotation
-        let color = PIECE_COLORS[next_kind as usize];
-        let preview_cell = 7.0; // Slightly smaller cells for preview
+        host_api::draw_text("LEVEL", lx, BOARD_Y + 180.0, 14);
+        host_api::draw_text(&self.level.to_string(), lx, BOARD_Y + 200.0, 18);
 
-        for &(dx, dy) in &offsets {
-            let px = x + dx as f32 * preview_cell;
-            let py = y + dy as f32 * preview_cell;
-            host_api::draw_rect(px, py, preview_cell - 1.0, preview_cell - 1.0, color);
+        host_api::draw_text("LINES", lx, BOARD_Y + 240.0, 14);
+        host_api::draw_text(&self.lines_cleared.to_string(), lx, BOARD_Y + 260.0, 18);
+
+        host_api::draw_text("CONTROLS", lx, BOARD_Y + 340.0, 12);
+        host_api::draw_text("Arrow  Move", lx, BOARD_Y + 358.0, 10);
+        host_api::draw_text("Up     Hard drop", lx, BOARD_Y + 372.0, 10);
+        host_api::draw_text("Down   Soft drop", lx, BOARD_Y + 386.0, 10);
+        host_api::draw_text("A/Z    Rotate CW", lx, BOARD_Y + 400.0, 10);
+        host_api::draw_text("B/X    Rotate CCW", lx, BOARD_Y + 414.0, 10);
+        host_api::draw_text("Select Hold", lx, BOARD_Y + 428.0, 10);
+
+        // ---- RIGHT PANEL ----
+        let rx = RIGHT_X;
+
+        host_api::draw_text("NEXT", rx, BOARD_Y, 16);
+        for i in 0..NEXT_COUNT {
+            let kind = self.queue.peek(i);
+            let y_off = BOARD_Y + 24.0 + i as f32 * 70.0;
+            host_api::draw_rect(rx, y_off, 120.0, 60.0, COLOR_HUD_BG);
+            Self::draw_piece_preview(kind, rx + 10.0, y_off + 10.0, 12.0);
+        }
+
+        if self.b2b_active {
+            host_api::draw_text("B2B", rx, BOARD_Y + 380.0, 14);
+        }
+        if self.combo > 0 {
+            host_api::draw_text(&format!("COMBO x{}", self.combo), rx, BOARD_Y + 400.0, 14);
+        }
+
+        // Clear text overlay
+        if !self.last_clear_text.is_empty() {
+            host_api::draw_text(
+                self.last_clear_text,
+                BOARD_X + BOARD_PX_W / 2.0 - 60.0,
+                BOARD_Y + BOARD_PX_H / 2.0 - 10.0,
+                18,
+            );
+        }
+
+        // Game Over overlay
+        if self.state == GameState::GameOver {
+            host_api::draw_rect(BOARD_X, BOARD_Y, BOARD_PX_W, BOARD_PX_H, COLOR_OVERLAY);
+            let cx = BOARD_X + BOARD_PX_W / 2.0 - 60.0;
+            let cy = BOARD_Y + BOARD_PX_H / 2.0 - 20.0;
+            host_api::draw_text("GAME OVER", cx, cy, 20);
+            host_api::draw_text(&format!("Score: {}", self.score), cx, cy + 28.0, 14);
+            host_api::draw_text("Press START", cx + 4.0, cy + 52.0, 12);
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Global State (single-threaded WASM — no data races)
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  Global state (single-threaded WASM)
+// ===========================================================================
 
-#[allow(static_mut_refs)]
 static mut STATE: Option<Game> = None;
 
-// ---------------------------------------------------------------------------
-// WIT Guest Implementation
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  WIT guest implementation
+// ===========================================================================
 
 impl Guest for Tetris {
     fn init() {
-        unsafe {
-            STATE = Some(Game::new());
-        }
+        unsafe { STATE = Some(Game::new()); }
     }
 
     fn update(delta_ms: u32) {
+        #[allow(static_mut_refs)]
         let game = unsafe { STATE.as_mut().expect("init not called") };
 
         match game.state {
             GameState::Playing => game.update_playing(delta_ms),
             GameState::GameOver => {
-                // Submit score once
                 if !game.score_submitted {
                     game.score_submitted = true;
-                    let score_str = game.score.to_string();
-                    crate::ignis::game::host_api::set_storage("last_score", &score_str);
+                    crate::ignis::game::host_api::set_storage(
+                        "last_score",
+                        &game.score.to_string(),
+                    );
                 }
-                // Wait for Start to restart
                 if game.input_start {
                     game.reset();
                 }
-                // Clear input
                 game.input_start = false;
             }
         }
@@ -891,30 +898,34 @@ impl Guest for Tetris {
     }
 
     fn handle_input(action: u32) {
+        #[allow(static_mut_refs)]
         let game = unsafe { STATE.as_mut().expect("init not called") };
-        match action {
-            ACTION_LEFT => game.input_left = true,
-            ACTION_RIGHT => game.input_right = true,
-            ACTION_DOWN => game.input_down = true,
-            ACTION_UP => game.input_hard_drop = true,
-            ACTION_A => game.input_rotate_cw = true,
-            ACTION_B => game.input_rotate_ccw = true,
-            ACTION_START => game.input_start = true,
-            _ => {}
+
+        if action < RELEASE_OFFSET {
+            match action {
+                ACTION_LEFT => game.held_left = true,
+                ACTION_RIGHT => game.held_right = true,
+                ACTION_DOWN => game.held_down = true,
+                ACTION_UP => game.input_hard_drop = true,
+                ACTION_A => game.input_rotate_cw = true,
+                ACTION_B => game.input_rotate_ccw = true,
+                ACTION_START => game.input_start = true,
+                ACTION_SELECT => game.input_hold = true,
+                _ => {}
+            }
+        } else {
+            match action - RELEASE_OFFSET {
+                ACTION_LEFT => game.held_left = false,
+                ACTION_RIGHT => game.held_right = false,
+                ACTION_DOWN => game.held_down = false,
+                _ => {}
+            }
         }
     }
 
-    fn get_name() -> String {
-        "Tetris".to_string()
-    }
-
-    fn get_version() -> String {
-        "1.0.0".to_string()
-    }
-
-    fn get_author() -> String {
-        "Ignis Team".to_string()
-    }
+    fn get_name() -> String { "Tetris".to_string() }
+    fn get_version() -> String { "2.0.0".to_string() }
+    fn get_author() -> String { "Ignis Team".to_string() }
 }
 
 export!(Tetris);

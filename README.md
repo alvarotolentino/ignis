@@ -54,8 +54,7 @@ ignis/
 ├── plugins/                    # Game plugins
 │   └── hello-world/            # Test plugin (draws rect + text)
 │       ├── ignis.toml          # Plugin manifest
-│       ├── hello_world.wasm    # Compiled WASM component (~64KB)
-│       └── plugin/             # Rust source for the plugin
+│       └── plugin/             # Rust source → builds hello_world.wasm
 └── docs/                       # Private — spec, plan, checklist (not in repo)
 ```
 
@@ -200,6 +199,42 @@ description = "A short description"
 | Shift | Select |
 | ESC | Return to menu |
 
+## Building WASM Plugins
+
+The compiled `.wasm` binaries are **not checked into git** — you must build them from source before running the app.
+
+### Prerequisites
+
+```bash
+rustup target add wasm32-wasip2
+```
+
+### Build All Plugins
+
+From the repository root:
+
+```bash
+# Hello World
+cd plugins/hello-world/plugin
+cargo build --target wasm32-wasip2 --release
+cp target/wasm32-wasip2/release/hello_world.wasm ../hello_world.wasm
+cd ../../..
+
+# Space Invaders
+cd plugins/space-invaders/plugin
+cargo build --target wasm32-wasip2 --release
+cp target/wasm32-wasip2/release/space_invaders.wasm ../space_invaders.wasm
+cd ../../..
+
+# Tetris
+cd plugins/tetris/plugin
+cargo build --target wasm32-wasip2 --release
+cp target/wasm32-wasip2/release/tetris.wasm ../tetris.wasm
+cd ../../..
+```
+
+Each plugin compiles to a `.wasm` file that must be placed next to its `ignis.toml` manifest (e.g. `plugins/tetris/tetris.wasm`).
+
 ## Development
 
 ```bash
@@ -214,10 +249,6 @@ cd src-tauri && cargo clippy --all-targets -- -D warnings
 
 # TypeScript type check
 npx tsc --noEmit
-
-# Build plugin
-cd plugins/hello-world/plugin
-cargo build --target wasm32-wasip2 --release
 ```
 
 ## License

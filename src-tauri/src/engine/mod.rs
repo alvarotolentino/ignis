@@ -120,11 +120,20 @@ impl GameEngine {
                 let (frame, game_over_score) = {
                     let mut guard = plugin.lock().unwrap();
                     if let Some(rt) = guard.as_mut() {
-                        // Drain input queue and dispatch to plugin
+                        // Drain input queue and dispatch to plugin.
+                        // Encode press/release into the action u32:
+                        //   0–7  = press events
+                        //   8–15 = release events (action + 8)
+                        // Backward-compatible: plugins that only match 0–7
+                        // silently ignore releases via their `_ => {}` arm.
                         {
                             let mut q = input_q.lock().unwrap();
                             while let Some(ev) = q.pop_front() {
-                                let action_id = ev.action.to_u32();
+                                let action_id = if ev.pressed {
+                                    ev.action.to_u32()
+                                } else {
+                                    ev.action.to_u32() + 8
+                                };
                                 if let Err(e) = rt.call_handle_input(action_id) {
                                     log::warn!("handle_input failed: {e}");
                                 }
