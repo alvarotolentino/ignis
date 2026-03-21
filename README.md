@@ -52,9 +52,18 @@ ignis/
 │   ├── lib/                    # Tauri wrappers, types, render bridge
 │   └── components/             # Layout shell
 ├── plugins/                    # Game plugins
-│   └── hello-world/            # Test plugin (draws rect + text)
-│       ├── ignis.toml          # Plugin manifest
-│       └── plugin/             # Rust source → builds hello_world.wasm
+│   ├── hello-world/            # Test plugin (draws rect + text)
+│   │   ├── ignis.toml          # Plugin manifest
+│   │   └── plugin/             # Rust source → builds hello_world.wasm
+│   ├── space-invaders/         # Classic Space Invaders clone
+│   │   ├── ignis.toml
+│   │   └── plugin/
+│   ├── tetris/                 # Tetris with hold/preview, wall kicks
+│   │   ├── ignis.toml
+│   │   └── plugin/
+│   └── asteroids/              # Asteroids with saucers, hyperspace, wraparound
+│       ├── ignis.toml
+│       └── plugin/
 └── docs/                       # Private — spec, plan, checklist (not in repo)
 ```
 
@@ -101,6 +110,9 @@ Plugins are fully sandboxed — no filesystem, network, or OS access. They commu
 - Player profile CRUD (SQLite-backed)
 - Main menu with game selector (keyboard nav + click)
 - Hello-world test plugin (red rectangle + "Hello Ignis!" text)
+- Space Invaders plugin (55 invaders, bunkers, saucer, classic wave progression)
+- Tetris plugin (SRS rotation, wall kicks, hold piece, ghost piece, 7-bag randomizer)
+- Asteroids plugin (wireframe rendering, asteroid splitting, saucers, hyperspace, wraparound physics)
 - ESC to return to menu from any game
 
 ### Roadmap
@@ -108,8 +120,8 @@ Plugins are fully sandboxed — no filesystem, network, or OS access. They commu
 | Phase | Description | Status |
 |-------|-------------|--------|
 | I | The Shell — engine, plugins, rendering, input, menu | **Done** |
-| II | Standard Wave — hardened host imports, Space Invaders, Tetris, high scores, keybindings, gamepad | Planned |
-| III | Complex Wave — Asteroids, Bomberman, plugin browser | Planned |
+| II | Standard Wave — Space Invaders, Tetris, high scores | **Done** |
+| III | Complex Wave — Asteroids, Bomberman, plugin browser | **In Progress** |
 | IV | Advanced Wave — Pac-Man (A* + ghost FSM), Downwell clone (procgen + gravity) | Planned |
 | V | Polish — audio mixing, pixel font, cover art, CI/CD, documentation | Planned |
 
@@ -230,6 +242,12 @@ cd ../../..
 cd plugins/tetris/plugin
 cargo build --target wasm32-wasip2 --release
 cp target/wasm32-wasip2/release/tetris.wasm ../tetris.wasm
+cd ../../..
+
+# Asteroids
+cd plugins/asteroids/plugin
+cargo build --target wasm32-wasip2 --release
+cp target/wasm32-wasip2/release/asteroids.wasm ../asteroids.wasm
 cd ../../..
 ```
 
